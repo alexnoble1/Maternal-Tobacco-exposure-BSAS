@@ -1,0 +1,114 @@
+library(edgeR)
+library(AnnotationDbi)
+library(org.Mm.eg.db)
+library(here)
+library(readxl)
+
+targets <- read_excel(here("targets.xlsx"), sheet = "Sheet1") # ,stringsAsFactors=FALSE
+targets
+Group <- factor(paste(targets$IU,targets$BD,sep="_"))
+targets <- cbind(targets,Group=Group)
+## group <- factor(targets$IU)
+## Sample <- row.names(targets)
+here('/F/Alex/Methylation coverage')
+Sample <- list.files(here("Methylation coverage/"))
+files <- paste0(("Methylation coverage\\"),Sample)
+yall <- readBismark2DGE(files, sample.names=Sample)
+
+dim(yall)
+head(yall$counts)
+head(yall$genes)
+head(yall$samples)
+
+## keep <- rep(TRUE, nrow(yall))
+## Chr <- as.character(yall$genes$Chr)
+## keep[ grep("random",Chr) ] <- FALSE
+## keep[ grep("chrUn",Chr) ] <- FALSE
+## keep[Chr=="chrY"] <- FALSE
+## keep[Chr=="chrM"] <- FALSE
+## table(keep)
+## yall <- yall[keep,, keep.lib.sizes=FALSE]
+## ChrNames <- paste0("chr",c(1:19,"X"))
+## ChrNames
+## yall$genes$Chr <- factor(yall$genes$Chr, levels=ChrNames)
+## o <- order(yall$genes$Chr, yall$genes$Locus)
+## yall <- yall[o,]
+## TSS <- nearestTSS(yall$genes$Chr, yall$genes$Locus, species="Mm")
+## yall$genes$EntrezID <- TSS$gene_id
+## yall$genes$Symbol <- TSS$symbol
+## yall$genes$Strand <- TSS$strand
+## yall$genes$Distance <- TSS$distance
+## yall$genes$Width <- TSS$width
+## head(yall$genes)
+
+yall$samples$group <- factor(targets$Group)
+group <- factor(targets$Group)
+head(yall$samples)
+
+
+Methylation <- gl(2,1,ncol(yall), labels=c("Me","Un"))
+Coverage <- yall$counts[, Methylation=="Me"] + yall$counts[, Methylation=="Un"]
+head(Coverage)
+
+rowSums(Coverage)
+keep <- rowSums(Coverage >= 8) >= 96
+table(keep)
+
+y <- yall[keep,, keep.lib.sizes=FALSE]
+TotalLibSize <- y$samples$lib.size[Methylation=="Me"] + y$samples$lib.size[Methylation=="Un"]
+y$samples$lib.size <- rep(TotalLibSize, each=2)
+y$samples
+
+Me <- y$counts[, Methylation=="Me"]
+Un <- y$counts[, Methylation=="Un"]
+M <- log2(Me + 2) - log2(Un + 2)
+colnames(M) <- group
+plotMDS(M)
+
+designSL <- model.matrix(~0+Group, data=targets)
+colnames(designSL) <- c("P6","P7","P8","P9")
+designSL
+design <- modelMatrixMeth(designSL)
+design
+
+
+
+y <- estimateDisp(y, design, trend="none")
+y$common.dispersion
+y$prior.df
+fit <- glmFit(y, design)
+
+
+contrIU <- makeContrasts(LvsB=0.25*(P6+P7+P8+P9)-0.5*(P10+P11), levels=design)
+lrtIU <- glmLRT(fit, contrast=contrIU)
+topTags(lrtIU)
+topTags(lrtIU, n = 210, sort.by = "PValue", p.value = 1)
+summary(decideTests(lrtIU, adjust.method = "none"))
+plotMD(lrtIU, adjust.method = "none", xlab = "Average log-expression",
+       ylab = "Expression log-ratio (IU exposed vs non-IU)", main="IU exposed vs non-IU (GLM negative binomial distribution)")
+
+
+contrBD <- makeContrasts(LvsB=0.33*(P6+P7+P10)-0.33*(P8+P9+P11), levels=design)
+lrtBD <- glmLRT(fit, contrast=contrBD)
+topTags(lrtBD)
+topTags(lrtBD, n = 210, sort.by = "PValue", p.value = 1)
+summary(decideTests(lrtBD, adjust.method = "none"))
+plotMD(lrtBD, adjust.method ="none", xlab= "Average log-expression",
+       ylab = "Expression log-ratio (BD vs non-BD)", main="BD vs non-BD (GLM negative binomial distribution)")
+
+contrS <- makeContrasts(LvsB=0.33*(P6+P8+P11)-0.33*(P7+P9+P10),levels=design)
+lrtS <- glmLRT(fit, contrast=contrS)
+topTags(lrtS)
+topTags(lrtS, n = 210, sort.by = "PValue", p.value = 1)
+summary(decideTests(lrtS, adjust.method ="none"))
+plotMD(lrtS, adjust.method ="none", xlab= "Average log-expression",
+       ylab = "Expression log-ratio (Smoking vs non-smoker)", main="Smoking vs non-smoker (GLM negative binomial distribution)")
+
+contrIUBD <- makeContrasts(LvsB=0.5*(P6+P7)-0.5*(P8+P9)-P10+P11, levels=design)
+lrtIUBD <- glmLRT(fit, contrast=contrIUBD)
+topTags(lrtIUBD)
+topTags(lrtIUBD, n = 210, sort.by = "PValue", p.value = 1)
+summary(decideTests(lrtIUBD, adjust.method="none"))
+plotMD(lrtIUBD, adjust.method = "none",xlab= "Average log-expression",
+       ylab = "Expression log-ratio (IU vs non-IU vs BD vs non-BD)", main="IU vs non-IU vs BD vs non-BD (GLM negative binomial distribution)" )
+
